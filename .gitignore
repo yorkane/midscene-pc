@@ -20,9 +20,9 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # Env files
-.env
-.env.*
-!.env.example
+# .env
+# .env.*
+# !.env.example
 
 # IDE/editor
 .vscode/

@@ -8,9 +8,9 @@ export async function browserUse(pcService: IPCService) {
   const pcDevice = new PCDevice({
     pcService,
     launchOptions: {
-      windowInfo: {
-        appName: "Edge"
-      },
+      // windowInfo: {
+      //   appName: "chrome.exe"
+      // },
     },
   });
   await pcDevice.launch();
