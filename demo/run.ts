@@ -16,21 +16,23 @@ import { ymlScriptDemo } from "./yml.script";
 const runDemo = async (pcService: IPCService) => {
   console.log(`running pc agent demo with ${pcService.name}`);
   //   await sendChatMsg(pcService);
-  //   await browserUse(pcService);
+    await browserUse(pcService);
   // await writeFile(pcService);
   // await simpleDescription(pcService);
   // await playMusic(pcService);
   // await remoteMonitor();
-  await ymlScriptDemo(pcService);
+  // await ymlScriptDemo(pcService);
 };
 
 (async () => {
   let pcService: IPCService = undefined as any;
   if (process.argv.includes("--remote")) {
     // await startServer();
-    pcService = await createRemotePCService("http://localhost:3333");
+    pcService = await createRemotePCService("http://192.168.1.26:4001");
   } else {
     pcService = localPCService;
   }
   await runDemo(pcService);
+  // await runDemo(pcService);
+  // await runDemo(pcService);
 })();

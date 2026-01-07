@@ -41,6 +41,7 @@ import {
   PNGBuffer,
 } from "./interfaces/pc.service.interface.js";
 import "./logger.js"; // 导入日志配置
+import { log } from "console";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -193,9 +194,75 @@ export default class PCDevice implements AbstractInterface {
   }
 
   private mapKeyboard(keyName: string): KeyCode | undefined {
-    if (keyName in KeyCode) {
-      return (KeyCode as any)[keyName] as KeyCode;
+    // 标准化输入：去除首尾空格
+    const normalizedKey = keyName?.trim();
+    if (!normalizedKey) {
+      console.warn(`[mapKeyboard] Empty key name provided`);
+      return undefined;
     }
+
+    // 尝试直接映射（检查枚举属性）
+    if (normalizedKey in KeyCode) {
+      const result = (KeyCode as any)[normalizedKey] as KeyCode;
+      // console.log(`[mapKeyboard] Direct mapping found: "${normalizedKey}" -> ${result}`);
+      return result;
+    }
+
+    // 尝试不区分大小写的映射（针对单个字母键）
+    const uppercasedKey = normalizedKey.toUpperCase();
+    if (uppercasedKey in KeyCode && uppercasedKey !== normalizedKey) {
+      const result = (KeyCode as any)[uppercasedKey] as KeyCode;
+      // console.log(`[mapKeyboard] Case-insensitive mapping found: "${normalizedKey}" -> "${uppercasedKey}" -> ${result}`);
+      return result;
+    }
+
+    // 尝试将输入转换为数字（支持直接传入数字码）
+    const numericCode = parseInt(normalizedKey, 10);
+    if (!isNaN(numericCode)) {
+      // 检查是否是有效的 KeyCode 值
+      const validValues = Object.values(KeyCode).filter(
+        (v) => typeof v === "number"
+      );
+      if (validValues.includes(numericCode)) {
+        // console.log(`[mapKeyboard] Numeric code found: "${normalizedKey}" -> ${numericCode}`);
+        return numericCode as KeyCode;
+      }
+    }
+
+    // 支持更多常见键盘按键名称的别名映射
+    const keyAliases: Record<string, string> = {
+      "Enter": "Return",
+      "Ctrl": "LeftControl",
+      "Control": "LeftControl",
+      "Cmd": "LeftMeta",
+      "Command": "LeftMeta",
+      "Win": "LeftMeta",
+      "Windows": "LeftMeta",
+      "Alt": "LeftAlt",
+      "Option": "LeftAlt",
+      "Shift": "LeftShift",
+      "Space": "Space",
+      "Tab": "Tab",
+      "Esc": "Escape",
+      "Up": "Up",
+      "Down": "Down",
+      "Left": "Left",
+      "Right": "Right",
+      "Delete": "Delete",
+      "Del": "Delete",
+      "Backspace": "Backspace",
+      "CapsLock": "CapsLock",
+    };
+
+    const mappedName = keyAliases[normalizedKey];
+    if (mappedName && mappedName in KeyCode) {
+      const result = (KeyCode as any)[mappedName] as KeyCode;
+      // console.log(`[mapKeyboard] Alias mapping found: "${normalizedKey}" -> "${mappedName}" -> ${result}`);
+      return result;
+    }
+
+    console.warn(`[mapKeyboard] Key "${normalizedKey}" not found in KeyCode enum`);
+    // console.log(`[mapKeyboard] Available keys: ${Object.keys(KeyCode).filter(k => isNaN(Number(k))).join(', ')}`);
     return undefined;
   }
 
@@ -513,7 +580,7 @@ export default class PCDevice implements AbstractInterface {
           await this.pressKey(...(keys as any));
         } else {
           const nutKey = this.mapKeyboard(key);
-          if (!nutKey) {
+          if (nutKey === undefined || nutKey === null) {
             throw new Error(`Key ${key} not found`);
           }
           await this.pressKey(nutKey);
