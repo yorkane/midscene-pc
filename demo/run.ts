@@ -12,23 +12,26 @@ import { sendChatMsg } from "./send.chat.msg";
 import { playMusic } from "./play.music";
 import { remoteMonitor } from "./remote.monitor";
 import { ymlScriptDemo } from "./yml.script";
+import { weixin } from "./weixin-video";
 
 const runDemo = async (pcService: IPCService) => {
-  console.log(`running pc agent demo with ${pcService.name}`);
+  // console.log(`running pc agent demo with ${pcService.name}`);
   //   await sendChatMsg(pcService);
-    await browserUse(pcService);
+    // await browserUse(pcService);
   // await writeFile(pcService);
   // await simpleDescription(pcService);
   // await playMusic(pcService);
   // await remoteMonitor();
   // await ymlScriptDemo(pcService);
+  await weixin(pcService);
+
 };
 
 (async () => {
   let pcService: IPCService = undefined as any;
   if (process.argv.includes("--remote")) {
     // await startServer();
-    pcService = await createRemotePCService("http://192.168.1.26:4001");
+    pcService = await createRemotePCService("http://192.168.1.26:4000");
   } else {
     pcService = localPCService;
   }

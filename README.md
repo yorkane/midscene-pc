@@ -50,7 +50,7 @@ npx midscene-pc@latest
 指定端口与主机：
 
 ```bash
-npx midscene-pc --port 4000 --host 127.0.0.1
+npx midscene-pc --port 4000 --host 0.0.0.0
 ```
 
 查看帮助：
