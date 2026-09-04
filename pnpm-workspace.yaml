@@ -3,3 +3,8 @@ onlyBuiltDependencies:
   - gui
   - puppeteer
   - sharp
+allowBuilds:
+  esbuild: true
+  gui: true
+  sharp: true
+  puppeteer: true

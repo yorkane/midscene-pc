@@ -12,6 +12,8 @@ Control desktop apps and windows with Midscene. This package provides a PC devic
 - Provides both local service (`localPCService`) and remote service (`createRemotePCService`) modes. Remote mode allows deploying a desktop-enabled Docker image on a server ([DockerHub](https://hub.docker.com/r/ppagent/midscene-ubuntu-desktop), [Git](https://github.com/Mofangbao/midscene-pc-docker)), so client programs don't need to run in a desktop environment, such as running scheduled tasks on servers.
 - Supports multi-monitor, window enumeration and screenshots, encapsulates mouse/keyboard/clipboard operations.
 - Deep integration with `@midscene/core`'s positioning and action system.
+- Adapted to the input-primitives device contract of Midscene 1.10+.
+- Ships a Windows window-level node app (`win-node-app`) exposing window capabilities and window-locked AI tasks over HTTP.
 
 ---
 
@@ -282,6 +284,36 @@ pnpm dev --remote
 - **Monitor**: `{ id, name, x, y, width, height, rotation, scaleFactor, frequency, isPrimary }`
 - **Window**: `{ id, appName, title, x, y, width, height, currentMonitor: Monitor }`
 - **MouseButton**, **KeyCode** enums and **Point**, **Rect** types are exported from this package
+
+---
+
+## 🪟 Windows window-level node app (win-node-app)
+
+Run an HTTP service inside a Windows desktop session to expose window-level capabilities (including Midscene AI tasks) to external systems:
+
+```bash
+# on the Windows machine, inside an interactive session
+npm install midscene-pc
+node node_modules/midscene-pc/dist/win-node-app.js
+```
+
+Env: `PORT` (3333), `HOST` (0.0.0.0), `TOKEN` (optional, requests must carry `?token=`), `ENABLE_AI=0` disables AI endpoints; model config still comes from `.env` (`MIDSCENE_MODEL_*`).
+
+On top of the built-in PC service endpoints:
+
+- `GET /api/windows` — visible windows (id/title/appName/geometry)
+- `GET /api/windows/foreground` — foreground window handle
+- `POST /api/windows/launch` `{ exe, args }` — start a GUI app in the desktop session
+- `POST /api/windows/focus|minimize|restore` `{ id }` — window lifecycle
+- `POST /api/ai/act` `{ windowId?, task }` — run an AI task locked to one window's rect
+- `POST /api/ai/query` `{ windowId?, demand }` — extract structured data from the window screenshot
+- `POST /api/ai/output` `{ windowId?, task }` — return the model's final answer (with timeout)
+- `POST /api/ai/tap|input|locate` — single window-scoped steps
+- `POST /api/agent/reset` — release cached window devices/agents
+
+`windowId`/`title`/`appName` define the capture+click coordinate space: the model only sees and operates inside that window rect; omit them to target the primary monitor.
+
+> On Windows, Chinese text is typed via clipboard paste (Ctrl+V) — no IME dependency, code points verified lossless. Screenshot and input require an interactive (desktop) session; SSH/service sessions have no valid desktop handle.
 
 ---
 

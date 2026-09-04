@@ -1,27 +1,13 @@
-import { type ActionScrollParam, type DeviceAction, getMidsceneLocationSchema, type InterfaceType, LocateResultElement, type Size, z } from "@midscene/core";
+import { type ActionScrollParam, type DeviceAction, type InterfaceType, type LocateResultElement, type Size, z } from "@midscene/core";
 import {
     type AbstractInterface,
-    ActionDoubleClickParam,
-    ActionDragAndDropParam,
-    ActionHoverParam,
-    ActionInputParam,
-    type ActionKeyboardPressParam,
-    ActionLongPressParam,
-    ActionRightClickParam,
-    // type ActionScrollParam,
-    ActionSwipeParam,
-    type ActionTapParam,
     defineAction,
-    defineActionDoubleClick,
-    defineActionDragAndDrop,
-    defineActionHover,
-    defineActionInput,
-    defineActionKeyboardPress,
-    defineActionLongPress,
-    defineActionRightClick,
-    defineActionScroll,
-    defineActionSwipe,
-    defineActionTap,
+    defineActionsFromInputPrimitives,
+    type InputPrimitives,
+    type KeyboardInputPrimitives,
+    type PointerInputPrimitives,
+    type ScrollInputPrimitives,
+    type TouchInputPrimitives,
 } from "@midscene/core/device";
 import { Jimp, JimpInstance } from "jimp";
 import os from "os";
@@ -29,8 +15,8 @@ import { AbstractMonitor, AbstractWindow, IPCService, KeyCode, MouseButton, PNGB
 import "./logger.js"; // 导入日志配置
 import { straightTo } from "@nut-tree-fork/nut-js";
 
-function sleep(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+function sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
 export type PCDeviceArea = {
@@ -119,12 +105,6 @@ export type ScreenTargetFinder = () => Promise<{
     captureImage: () => Promise<JimpInstance>;
 }>;
 
-const actionClearInputParamSchema = z.object({
-    locate: getMidsceneLocationSchema().describe("The input field to be cleared"),
-});
-type ActionClearInputParam = {
-    locate: LocateResultElement;
-};
 interface WindowInfo {
     x: number;
     y: number;
@@ -484,128 +464,134 @@ export default class PCDevice implements AbstractInterface {
         }
     }
 
-    /**
-     * 设备支持的操作空间
-     */
-    public actionSpace(): DeviceAction<any>[] {
-        return [
-            defineActionTap(async (param: ActionTapParam) => {
-                const element = param.locate;
-                await this.click(element);
-            }),
-            defineActionKeyboardPress(async (param: ActionKeyboardPressParam) => {
-                const key = param.keyName;
-                // 测试是否先执行了点击操作获得焦点
-                const element = param.locate;
-                if (element?.center) {
-                    const screenPos = await this.getScreenPos(element.center);
-                    await this.options.pcService.mouse.setPosition(screenPos);
+    // ===== Midscene >= 1.10 input primitives =====
+    // 新版 core 不再接受旧式 defineActionTap(param) 回调，而是要求设备暴露
+    // Pointer/Keyboard/Scroll/Touch 四类原语，action 空间由 core 统一组装。
+    // 原语入参坐标是当前截图区域内的坐标，这里统一换算成全局屏幕坐标。
+    private get pointerPrimitives(): NonNullable<InputPrimitives["pointer"]> {
+        return {
+            tap: async (p) => {
+                const pos = await this.getScreenPos([p.x, p.y]);
+                await this.options.pcService.mouse.setPosition(pos);
+                await this.options.pcService.mouse.click(MouseButton.LEFT);
+                await sleep(PCDevice.ACTION_TRANSFORM_TIME);
+            },
+            doubleClick: async (p) => {
+                const pos = await this.getScreenPos([p.x, p.y]);
+                await this.options.pcService.mouse.setPosition(pos);
+                await this.options.pcService.mouse.doubleClick(MouseButton.LEFT);
+                await sleep(PCDevice.ACTION_TRANSFORM_TIME);
+            },
+            rightClick: async (p) => {
+                const pos = await this.getScreenPos([p.x, p.y]);
+                await this.options.pcService.mouse.setPosition(pos);
+                await this.options.pcService.mouse.click(MouseButton.RIGHT);
+                await sleep(PCDevice.ACTION_TRANSFORM_TIME);
+            },
+            hover: async (p) => {
+                const pos = await this.getScreenPos([p.x, p.y]);
+                await this.options.pcService.mouse.setPosition(pos);
+                await sleep(2000);
+            },
+            longPress: async (p, opts) => {
+                const pos = await this.getScreenPos([p.x, p.y]);
+                await this.options.pcService.mouse.setPosition(pos);
+                await this.options.pcService.mouse.pressButton(MouseButton.LEFT);
+                await sleep(opts?.duration ?? 2000);
+                await this.options.pcService.mouse.releaseButton(MouseButton.LEFT);
+            },
+            dragAndDrop: async (from, to) => {
+                const fromPos = await this.getScreenPos([from.x, from.y]);
+                await this.options.pcService.mouse.setPosition(fromPos);
+                await this.options.pcService.mouse.pressButton(MouseButton.LEFT);
+                const toPos = await this.getScreenPos([to.x, to.y]);
+                await this.options.pcService.mouse.move(await straightTo(toPos));
+                await this.options.pcService.mouse.releaseButton(MouseButton.LEFT);
+                await sleep(PCDevice.ACTION_TRANSFORM_TIME);
+            },
+        };
+    }
+
+    private get keyboardPrimitives(): KeyboardInputPrimitives {
+        return {
+            keyboardPress: async (keyName, opts) => {
+                const target = opts?.target as LocateResultElement | undefined;
+                if (target?.center) {
+                    const pos = await this.getScreenPos(target.center);
+                    await this.options.pcService.mouse.setPosition(pos);
                     await this.options.pcService.mouse.click(MouseButton.LEFT);
                     await sleep(PCDevice.ACTION_TRANSFORM_TIME);
                 }
-                if (key.indexOf("+") > 0) {
-                    const keys = key.split("+").map((k) => this.mapKeyboard(k));
+                if (keyName.includes("+")) {
+                    const keys = keyName.split("+").map((k) => this.mapKeyboard(k));
                     if (keys.includes(undefined)) {
-                        throw new Error(`Key ${key} not found`);
+                        throw new Error(`Key ${keyName} not found`);
                     }
-                    await this.pressKey(...(keys as any));
+                    await this.pressKey(...(keys as KeyCode[]));
                 } else {
-                    const nutKey = this.mapKeyboard(key);
+                    const nutKey = this.mapKeyboard(keyName);
                     if (!nutKey) {
-                        throw new Error(`Key ${key} not found`);
+                        throw new Error(`Key ${keyName} not found`);
                     }
                     await this.pressKey(nutKey);
                 }
                 await sleep(PCDevice.ACTION_TRANSFORM_TIME);
-            }),
-            defineActionDoubleClick(async (param: ActionDoubleClickParam) => {
-                const element = param.locate;
-                const screenPos = await this.getScreenPos(element.center);
-                await this.options.pcService.mouse.setPosition(screenPos);
-                await this.options.pcService.mouse.doubleClick(MouseButton.LEFT);
-                await sleep(PCDevice.ACTION_TRANSFORM_TIME);
-            }),
-            defineActionDragAndDrop(async (param: ActionDragAndDropParam) => {
-                const element = param.from;
-                const screenPos = await this.getScreenPos(element.center);
-                await this.options.pcService.mouse.setPosition(screenPos);
-                await this.options.pcService.mouse.pressButton(MouseButton.LEFT);
-                const targetPos = await this.getScreenPos(param.to.center);
-                await this.options.pcService.mouse.move(await straightTo(targetPos));
-                await this.options.pcService.mouse.releaseButton(MouseButton.LEFT);
-                await sleep(PCDevice.ACTION_TRANSFORM_TIME);
-            }),
-            defineActionHover(async (param: ActionHoverParam) => {
-                const element = param.locate;
-                const screenPos = await this.getScreenPos(element.center);
-                await this.options.pcService.mouse.setPosition(screenPos);
-                await sleep(2000);
-            }),
-            defineActionInput(async (param: ActionInputParam) => {
-                const element = param.locate;
-                if (!element?.center) {
-                    console.error(`Element ${element} not found`);
-                    await this.typeText(param.value);
+            },
+            typeText: async (value, opts) => {
+                const target = opts?.target as LocateResultElement | undefined;
+                if (!target?.center) {
+                    console.error(`Element ${JSON.stringify(target)} not found`);
+                    await this.typeText(value);
+                    await sleep(PCDevice.ACTION_TRANSFORM_TIME);
+                    return;
+                }
+                const pos = await this.getScreenPos(target.center);
+                if (opts?.replace) {
+                    await this.clearInput(pos, value);
                 } else {
-                    const screenPos = await this.getScreenPos(element.center);
-                    if (param.mode === "clear") {
-                        await this.clearInput(screenPos);
-                    } else if (param.mode === "replace") {
-                        await this.clearInput(screenPos, param.value);
-                    } else {
-                        await this.options.pcService.mouse.setPosition(screenPos);
-                        if (this.options.clickBeforeInput) {
-                            await this.options.pcService.mouse.click(MouseButton.LEFT);
-                            await sleep(PCDevice.ACTION_TRANSFORM_TIME);
-                        }
-                        await this.typeText(param.value);
+                    await this.options.pcService.mouse.setPosition(pos);
+                    if (this.options.clickBeforeInput) {
+                        await this.options.pcService.mouse.click(MouseButton.LEFT);
+                        await sleep(PCDevice.ACTION_TRANSFORM_TIME);
                     }
+                    await this.typeText(value);
                 }
                 await sleep(PCDevice.ACTION_TRANSFORM_TIME);
-            }),
-            defineActionLongPress(async (param: ActionLongPressParam) => {
-                const element = param.locate;
+            },
+            clearInput: async (target) => {
+                const element = target as LocateResultElement | undefined;
                 if (element?.center) {
-                    const screenPos = await this.getScreenPos(element.center);
-                    await this.options.pcService.mouse.setPosition(screenPos);
-                    await this.options.pcService.mouse.pressButton(MouseButton.LEFT);
-                    await sleep(param.duration ?? 2000);
-                    await this.options.pcService.mouse.releaseButton(MouseButton.LEFT);
+                    const pos = await this.getScreenPos(element.center);
+                    await this.clearInput(pos);
                 } else {
-                    console.warn(`Element ${element} not found, skip long press`);
+                    console.warn("Element not found, skip clear input");
                 }
-            }),
-            defineActionRightClick(async (param: ActionRightClickParam) => {
+            },
+        };
+    }
+
+    private get scrollPrimitives(): ScrollInputPrimitives {
+        return {
+            scroll: async (param: ActionScrollParam) => {
                 const element = param.locate;
                 if (element?.center) {
-                    const screenPos = await this.getScreenPos(element.center);
-                    await this.options.pcService.mouse.setPosition(screenPos);
-                    await this.options.pcService.mouse.click(MouseButton.RIGHT);
-                } else {
-                    console.warn(`Element ${element} not found, skip right click`);
-                }
-            }),
-            defineActionScroll(async (param: ActionScrollParam) => {
-                const element = param.locate;
-                if (element?.center) {
-                    const screenPos = await this.getScreenPos(element.center);
-                    await this.options.pcService.mouse.setPosition(screenPos);
+                    const pos = await this.getScreenPos(element.center as number[]);
+                    await this.options.pcService.mouse.setPosition(pos);
                     await sleep(PCDevice.ACTION_TRANSFORM_TIME);
                 }
-                if (param.scrollType && param.scrollType !== "once") {
-                    switch (param.scrollType) {
-                        case "untilBottom":
+                const scrollType = (param as { scrollType?: string }).scrollType;
+                if (scrollType && scrollType !== "singleAction") {
+                    switch (scrollType) {
+                        case "scrollToBottom":
                             await this.pressKey(KeyCode.LeftControl, KeyCode.End);
                             break;
-                        case "untilTop":
+                        case "scrollToTop":
                             await this.pressKey(KeyCode.LeftControl, KeyCode.Home);
                             break;
-                        case "untilLeft":
-                            // work around
+                        case "scrollToLeft":
                             await this.mousewheel("scrollLeft", 20000);
                             break;
-                        case "untilRight":
-                            // work around
+                        case "scrollToRight":
                             await this.mousewheel("scrollRight", 20000);
                             break;
                     }
@@ -625,45 +611,45 @@ export default class PCDevice implements AbstractInterface {
                             break;
                     }
                 }
-            }),
-            defineActionSwipe(async (param: ActionSwipeParam) => {
-                const element = param.start;
-                if (element?.center && param.end?.center) {
-                    const screenPos = await this.getScreenPos(element.center);
-                    await this.options.pcService.mouse.setPosition(screenPos);
-                    switch (param.direction) {
-                        case "left":
-                            await this.options.pcService.mouse.scrollLeft(param.end.center[0] - element.center[0]);
-                            break;
-                        case "right":
-                            await this.options.pcService.mouse.scrollRight(param.end.center[0] - element.center[0]);
-                            break;
-                        case "down":
-                            await this.options.pcService.mouse.scrollDown(param.end.center[1] - element.center[1]);
-                            break;
-                        case "up":
-                            await this.options.pcService.mouse.scrollUp(param.end.center[1] - element.center[1]);
-                            break;
-                    }
+            },
+        };
+    }
+
+    private get touchPrimitives(): TouchInputPrimitives {
+        return {
+            swipe: async (start, end, opts) => {
+                const startPos = await this.getScreenPos([start.x, start.y]);
+                await this.options.pcService.mouse.setPosition(startPos);
+                const dy = end.y - start.y;
+                const dx = end.x - start.x;
+                // 桌面滚轮方向与手指滑动方向相反：手指上滑 = 内容向下滚动
+                if (Math.abs(dy) >= Math.abs(dx)) {
+                    if (dy < 0) await this.mousewheel("scrollDown", Math.abs(dy));
+                    else await this.mousewheel("scrollUp", Math.abs(dy));
                 } else {
-                    console.warn(`postion ${param.start?.center ? "start not found" : ""} ${param.end?.center ? "end not found" : ""}, skip swipe`);
+                    if (dx < 0) await this.mousewheel("scrollRight", Math.abs(dx));
+                    else await this.mousewheel("scrollLeft", Math.abs(dx));
                 }
-            }),
-            defineAction<typeof actionClearInputParamSchema, ActionClearInputParam>({
-                name: "ClearInput",
-                description: "Clear the text content of an input field",
-                interfaceAlias: "aiClearInput",
-                paramSchema: actionClearInputParamSchema,
-                call: async (param: ActionClearInputParam) => {
-                    const element = param.locate;
-                    if (element?.center) {
-                        const screenPos = await this.getScreenPos(element.center);
-                        await this.clearInput(screenPos);
-                    } else {
-                        console.warn(`Element ${element} not found, skip clear input`);
-                    }
-                },
-            }),
+                await sleep(PCDevice.ACTION_TRANSFORM_TIME);
+            },
+        };
+    }
+
+    /**
+     * 设备支持的操作空间（由四类输入原语组装，兼容 Midscene >= 1.10）
+     */
+    public actionSpace(): DeviceAction<any>[] {
+        const primitiveActions = defineActionsFromInputPrimitives(
+            {
+                pointer: this.pointerPrimitives,
+                keyboard: this.keyboardPrimitives,
+                scroll: this.scrollPrimitives,
+                touch: this.touchPrimitives,
+            },
+            { size: () => this.size(), sleep },
+        );
+        return [
+            ...primitiveActions,
             defineAction({
                 name: "OutputFinalAnwser",
                 description: "针对用户的提问，输出最后总结整理好的回答内容。仅当用户原始问题需要输出最终答案时采需要调用。",
@@ -724,7 +710,6 @@ export default class PCDevice implements AbstractInterface {
         return {
             width: targetInfo.rectInGlobal.width,
             height: targetInfo.rectInGlobal.height,
-            dpr: targetInfo.scaleFactor,
         };
     }
 

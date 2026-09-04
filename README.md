@@ -12,6 +12,8 @@ English README: [README.en.md](./README.en.md)
 - 提供本地服务（`localPCService`）与远程服务（`createRemotePCService`）两种模式。远程模式可以在服务器上部署一个带桌面的 docker 镜像（[DockerHub 地址](https://hub.docker.com/r/ppagent/midscene-ubuntu-desktop)，[Git地址](https://github.com/Mofangbao/midscene-pc-docker)），然后客户端程序就不需要在桌面环境下运行了，比如可以放到服务器上去定时运行等。
 - 支持多显示器、窗口枚举与截图，封装鼠标/键盘/剪贴板操作。
 - 与 `@midscene/core` 的定位与动作体系深度集成。
+- 适配 Midscene 1.10+ 的输入原语（input primitives）设备契约。
+- 内置 Windows 窗口级节点应用 `win-node-app`，把窗口能力与窗口锁定的 AI 任务以 HTTP 接口暴露给外部系统。
 
 
 
@@ -288,6 +290,52 @@ pnpm dev --remote
 - **Monitor**: `{ id, name, x, y, width, height, rotation, scaleFactor, frequency, isPrimary }`
 - **Window**: `{ id, appName, title, x, y, width, height, currentMonitor: Monitor }`
 - **MouseButton**、**KeyCode** 枚举以及 **Point**、**Rect** 类型来自本包导出的接口
+
+---
+
+## 🪟 Windows 窗口级节点应用（win-node-app）
+
+在 Windows 桌面会话内运行一个 HTTP 服务，把整套窗口级能力开放给外部系统调用（含 Midscene AI 任务）：
+
+```bash
+# 在 Windows 机器上（桌面会话内）
+npm install midscene-pc
+node node_modules/midscene-pc/dist/win-node-app.js
+```
+
+环境变量：`PORT`（默认 3333）、`HOST`（默认 0.0.0.0）、`TOKEN`（可选，设置后所有请求需带 `?token=`）、`ENABLE_AI=0` 关闭 AI 端点；模型配置沿用 `.env` 的 `MIDSCENE_MODEL_*` 系列。
+
+除了上文的内置 PC 服务接口，额外提供：
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET  | `/api/windows` | 可见窗口列表（id/title/appName/几何） |
+| GET  | `/api/windows/foreground` | 当前前台窗口句柄 |
+| POST | `/api/windows/launch` | `{ exe, args }` 在桌面会话启动应用 |
+| POST | `/api/windows/focus` | `{ id }` 置前窗口 |
+| POST | `/api/windows/minimize` | `{ id }` 最小化窗口 |
+| POST | `/api/windows/restore` | `{ id }` 恢复窗口 |
+| POST | `/api/ai/act` | `{ windowId?, task }` 在指定窗口范围内执行 AI 任务 |
+| POST | `/api/ai/query` | `{ windowId?, demand }` 从窗口截图中提取结构化数据 |
+| POST | `/api/ai/output` | `{ windowId?, task }` 让模型把最终答案作为结果返回（带超时） |
+| POST | `/api/ai/tap` | `{ windowId?, target }` 点击窗口内目标 |
+| POST | `/api/ai/input` | `{ windowId?, value, target }` 向窗口内输入框写文本 |
+| POST | `/api/ai/locate` | `{ windowId?, target }` 返回目标的 center/rect |
+| POST | `/api/agent/reset` | 释放所有缓存的窗口设备/代理 |
+
+`windowId`（或 `title`/`appName`）决定 AI 任务的截图与点击坐标系：模型只能看见并操作该窗口的矩形区域；省略时退化为整块主屏。
+
+调用示例（在 Chrome 里搜索中文关键词并读回结果）：
+
+```bash
+curl -X POST http://WIN:3333/api/windows/launch -H 'content-type: application/json' \\
+  -d '{"exe":"C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe","args":["--no-first-run","https://www.baidu.com/s?wd=%E6%9D%AD%E5%B7%9E%E8%A5%BF%E6%B9%96"]}'
+curl http://WIN:3333/api/windows   # 从返回里找到 Chrome 窗口的 id
+curl -X POST http://WIN:3333/api/ai/query -H 'content-type: application/json' \\
+  -d '{"windowId":131836,"demand":"{ pageTitle: string, firstResultTitle: string }"}'
+```
+
+> Windows 上的中文输入走剪贴板粘贴（Ctrl+V），不依赖 IME，实测码点无损；截屏与输入要求进程运行在交互（桌面）会话内，SSH/服务会话拿不到有效的桌面句柄。
 
 ---
 
