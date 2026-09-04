@@ -1,54 +1,21 @@
-# Window lifecycle helpers for the win-node-app HTTP API.
-# Uses -MemberDefinition (no here-string) so the file survives any line-ending transport.
+# Window lifecycle helper for the win-node-app HTTP API (thin loader).
+# The actual Win32 code lives in W11Win.cs and is compiled with the in-box .NET
+# Framework csc on first use: Add-Type -MemberDefinition silently produces no type
+# on minimal images (Tiny11), while Add-Type -Path only loads a precompiled assembly.
 param(
   [Parameter(Mandatory=$true)][string]$Action,
   [long]$Id = 0
 )
-$dq = [char]34
-$lines = @()
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern bool ShowWindow(IntPtr h, int c);')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern bool SetForegroundWindow(IntPtr h);')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern bool IsIconic(IntPtr h);')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern IntPtr GetForegroundWindow();')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'kernel32.dll' + $dq + ')] public static extern uint GetCurrentThreadId();')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern bool AttachThreadInput(uint a, uint b, bool flag);')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern bool SystemParametersInfo(uint a, uint b, IntPtr c, uint d);')
-$lines += ('[System.Runtime.InteropServices.DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern void SwitchToThisWindow(IntPtr h, bool altTab);')
-Add-Type -Name W11Api -MemberDefinition ($lines -join ' ')
-# Foreground-lock workaround: clear the SetForegroundWindow lock timeout.
-[void][W11Api]::SystemParametersInfo(0x2001, 0, [IntPtr]::Zero, 0)
-$h = [IntPtr]$Id
-function Bring-Front([IntPtr]$hwnd) {
-  [void][W11Api]::keybd_event(0x12, 0, 0, [UIntPtr]::Zero)
-  [void][W11Api]::keybd_event(0x12, 0, 2, [UIntPtr]::Zero)
-  $fg = [W11Api]::GetForegroundWindow()
-  $tidCur = [W11Api]::GetCurrentThreadId()
-  $dummy = [uint32]0
-  $tidFg = [W11Api]::GetWindowThreadProcessId($fg, [ref]$dummy)
-  if ($tidFg -ne $tidCur) { [void][W11Api]::AttachThreadInput($tidCur, $tidFg, $true) }
-  [void][W11Api]::SetForegroundWindow($hwnd)
-  for ($i = 0; $i -lt 6; $i++) {
-    if ([long][W11Api]::GetForegroundWindow() -eq [long]$hwnd) {
-      if ($tidFg -ne $tidCur) { [void][W11Api]::AttachThreadInput($tidCur, $tidFg, $false) }
-      return $true
-    }
-    Start-Sleep -Milliseconds 150
-    [void][W11Api]::SetForegroundWindow($hwnd)
-  }
-  if ($tidFg -ne $tidCur) { [void][W11Api]::AttachThreadInput($tidCur, $tidFg, $false) }
-  for ($i = 0; $i -lt 6; $i++) {
-    [void][W11Api]::SwitchToThisWindow($hwnd, $true)
-    Start-Sleep -Milliseconds 200
-    if ([long][W11Api]::GetForegroundWindow() -eq [long]$hwnd) { return $true }
-  }
-  return (([long][W11Api]::GetForegroundWindow()) -eq [long]$hwnd)
+$cs = Join-Path $PSScriptRoot 'W11Win.cs'
+if (-not (Test-Path $cs)) { Write-Output ('error=missing ' + $cs); exit 2 }
+$dll = Join-Path $env:TEMP 'midscene-pc-W11Win.dll'
+if ((-not (Test-Path $dll)) -or ((Get-Item $dll).LastWriteTime -lt (Get-Item $cs).LastWriteTime)) {
+  $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+  if (-not (Test-Path $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
+  if (-not (Test-Path $csc)) { Write-Output 'error=csc.exe not found'; exit 3 }
+  if (Test-Path $dll) { Remove-Item $dll -Force }
+  $co = & $csc /nologo /target:library /out:$dll $cs 2>&1
+  if (-not (Test-Path $dll)) { Write-Output ('error=compile failed: ' + (($co | Select-Object -First 2) -join ' ; ')); exit 4 }
 }
-switch ($Action) {
-  'focus'      { [void][W11Api]::ShowWindow($h, 9); Write-Output (Bring-Front $h) }
-  'minimize'   { [void][W11Api]::ShowWindow($h, 6); Write-Output 'True' }
-  'restore'    { if ([W11Api]::IsIconic($h)) { [void][W11Api]::ShowWindow($h, 9) }; Write-Output (Bring-Front $h) }
-  'foreground' { Write-Output ([long][W11Api]::GetForegroundWindow()) }
-  default      { Write-Error ('unknown action ' + $Action); exit 2 }
-}
+Add-Type -Path $dll
+[W11Win]::Run($Action, $Id)

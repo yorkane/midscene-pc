@@ -72,6 +72,18 @@ function runWindowFn(action: string, id = 0): Promise<string> {
   });
 }
 
+// The helper prints a single line of space-separated key=value pairs, e.g.
+// "focus=true fg=262850 iconic=false" or "error=compile failed: ...".
+function parseWindowFn(out: string): Record<string, string> {
+  const kv: Record<string, string> = {};
+  for (const tok of out.split(/\s+/).filter(Boolean)) {
+    const i = tok.indexOf('=');
+    if (i > 0) kv[tok.slice(0, i)] = tok.slice(i + 1);
+    else if (!(tok in kv)) kv[tok] = 'true';
+  }
+  return kv;
+}
+
 app.get('/api/windows', async (_req: Request, res: Response) => {
   try {
     const wins = await localPCService.allWindows();
@@ -93,7 +105,15 @@ async function windowAction(req: Request, res: Response, action: string) {
       return;
     }
     const out = await runWindowFn(action, id);
-    res.json({ ok: out.toLowerCase() === 'true' || out.length > 0, raw: out });
+    const state = parseWindowFn(out);
+    if (state.error !== undefined) {
+      res.status(500).json({ ok: false, error: out.replace(/^error=/, '') });
+      return;
+    }
+    // Honest verdict per action: the action "succeeded" only when the
+    // post-condition observed from Win32 says so.
+    const ok = action === 'minimize' ? state.minimized === 'true' : action === 'restore' ? state.restored === 'true' : state.focus === 'true';
+    res.json({ ok, action, state });
   } catch (err: any) {
     res.status(500).json({ error: String(err?.message ?? err) });
   }
@@ -120,7 +140,8 @@ app.post('/api/windows/launch', (req: Request, res: Response) => {
 
 app.get('/api/windows/foreground', async (_req: Request, res: Response) => {
   try {
-    res.json({ hwnd: Number(await runWindowFn('foreground')) });
+    const state = parseWindowFn(await runWindowFn('foreground'));
+    res.json({ hwnd: Number(state.fg ?? 0) });
   } catch (err: any) {
     res.status(500).json({ error: String(err?.message ?? err) });
   }
