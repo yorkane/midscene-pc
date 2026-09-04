@@ -305,6 +305,7 @@ On top of the built-in PC service endpoints:
 - `GET /api/windows/foreground` — foreground window handle
 - `POST /api/windows/launch` `{ exe, args }` — start a GUI app in the desktop session
 - `POST /api/windows/focus|minimize|restore` `{ id }` — window lifecycle
+- `POST /api/windows/close` `{ id }` — politely close a window (WM_CLOSE, like clicking the X)
 - `POST /api/ai/act` `{ windowId?, task }` — run an AI task locked to one window's rect
 - `POST /api/ai/query` `{ windowId?, demand }` — extract structured data from the window screenshot
 - `POST /api/ai/output` `{ windowId?, task }` — return the model's final answer (with timeout)

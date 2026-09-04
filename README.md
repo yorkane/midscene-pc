@@ -315,6 +315,7 @@ node node_modules/midscene-pc/dist/win-node-app.js
 | POST | `/api/windows/focus` | `{ id }` 置前窗口 |
 | POST | `/api/windows/minimize` | `{ id }` 最小化窗口 |
 | POST | `/api/windows/restore` | `{ id }` 恢复窗口 |
+| POST | `/api/windows/close` | `{ id }` 关闭窗口（WM_CLOSE，等同点 X） |
 | POST | `/api/ai/act` | `{ windowId?, task }` 在指定窗口范围内执行 AI 任务 |
 | POST | `/api/ai/query` | `{ windowId?, demand }` 从窗口截图中提取结构化数据 |
 | POST | `/api/ai/output` | `{ windowId?, task }` 让模型把最终答案作为结果返回（带超时） |

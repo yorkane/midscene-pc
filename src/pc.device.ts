@@ -81,6 +81,12 @@ export interface PCDeviceLaunchOptions {
          * default true.
          */
         fixedWindow?: boolean;
+        /**
+         * How long (ms) launch() waits for a matching window to appear.
+         * Browsers recreate their top-level window while the first page loads,
+         * so a short grace period is useful. default 8000.
+         */
+        timeout?: number;
     };
     /**
      * The full path to save the screenshot when manual mode is enabled.
@@ -325,7 +331,15 @@ export default class PCDevice implements AbstractInterface {
         this.launched = true;
         if (this.options.launchOptions?.windowInfo?.appName || this.options.launchOptions?.windowInfo?.title || this.options.launchOptions?.windowInfo?.id) {
             // try use window info
-            const targetWindow = await this.findWindow();
+            // The window may still be coming up (browsers recreate their top-level
+            // window while the first page loads), so poll for it before giving up.
+            const waitMs = this.options.launchOptions?.windowInfo?.timeout ?? 8000;
+            const deadline = Date.now() + Math.max(0, waitMs);
+            let targetWindow = await this.findWindow();
+            while (!targetWindow && Date.now() < deadline) {
+                await sleep(300);
+                targetWindow = await this.findWindow();
+            }
             if (targetWindow) {
                 const generateTargetInfo = (currentTargetWindow: WindowInfo): ReturnType<ScreenTargetFinder> => {
                     return Promise.resolve({
@@ -381,7 +395,11 @@ export default class PCDevice implements AbstractInterface {
                 console.debug(`Window ${targetWindow.title} found, use it as screenshot target`);
                 return;
             } else {
-                console.warn(`Window:\n ${JSON.stringify(this.options.launchOptions?.windowInfo)}\n not found, try use areainfo instead`);
+                // Do NOT silently fall through: without a targetFinder the first
+                // AI action dies later with 'this.targetFinder is not a function'.
+                throw new Error(
+                    `Window not found after \n ` + JSON.stringify(this.options.launchOptions?.windowInfo),
+                );
             }
         } else {
             let targetMonitor: AbstractMonitor = undefined as any;

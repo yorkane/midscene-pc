@@ -112,7 +112,13 @@ async function windowAction(req: Request, res: Response, action: string) {
     }
     // Honest verdict per action: the action "succeeded" only when the
     // post-condition observed from Win32 says so.
-    const ok = action === 'minimize' ? state.minimized === 'true' : action === 'restore' ? state.restored === 'true' : state.focus === 'true';
+    const verdict: Record<string, string | undefined> = {
+      minimize: state.minimized,
+      restore: state.restored,
+      focus: state.focus,
+      close: state.closed,
+    };
+    const ok = verdict[action] === 'true';
     res.json({ ok, action, state });
   } catch (err: any) {
     res.status(500).json({ error: String(err?.message ?? err) });
@@ -122,6 +128,7 @@ async function windowAction(req: Request, res: Response, action: string) {
 app.post('/api/windows/focus', (req, res) => windowAction(req, res, 'focus'));
 app.post('/api/windows/minimize', (req, res) => windowAction(req, res, 'minimize'));
 app.post('/api/windows/restore', (req, res) => windowAction(req, res, 'restore'));
+app.post('/api/windows/close', (req, res) => windowAction(req, res, 'close'));
 app.post('/api/windows/launch', (req: Request, res: Response) => {
   try {
     const exe = String(req.body?.exe ?? '');
