@@ -39,3 +39,7 @@ switch ($Action) {
   'foreground' { Write-Output ([long][W11Api]::GetForegroundWindow()) }
   default      { Write-Error ('unknown action ' + $Action); exit 2 }
 }
+$lines += ('[DllImport(' + $dq + 'user32.dll' + $dq + ')] public static extern bool SystemParametersInfo(uint a, uint b, IntPtr c, uint d);')
+Add-Type -Name W11Api -MemberDefinition ($lines -join ' ')
+# 解除前台锁：把 SetForegroundWindow 锁定时长清零（本会话内生效）
+[void][W11Api]::SystemParametersInfo(0x2001, 0, [IntPtr]::Zero, 0)
