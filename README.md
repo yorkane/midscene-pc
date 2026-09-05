@@ -323,8 +323,13 @@ node node_modules/midscene-pc/dist/win-node-app.js
 | POST | `/api/ai/input` | `{ windowId?, value, target }` 向窗口内输入框写文本 |
 | POST | `/api/ai/locate` | `{ windowId?, target }` 返回目标的 center/rect |
 | POST | `/api/agent/reset` | 释放所有缓存的窗口设备/代理 |
+| GET  | `/api/config/model` | 查看当前模型环境变量（API key 只回显掩码） |
+| POST | `/api/config/model` | 传 "values" 映射热切换模型后端 |
+| POST | `/api/config/model/test` | 传 "base_url"/"api_key" 探活模型服务，不改动配置 |
 
 `windowId`（或 `title`/`appName`）决定 AI 任务的截图与点击坐标系：模型只能看见并操作该窗口的矩形区域；省略时退化为整块主屏。
+
+模型热配置：`POST /api/config/model` 接受 `MIDSCENE_MODEL_*`、`MIDSCENE_(INSIGHT|PLANNING)_MODEL_*`、`MIDSCENE_OPENAI_*`、`MIDSCENE_USE_*` 与 `MIDSCENE_REPLANNING_CYCLE_LIMIT`，值为 `null` 表示删除该键；默认回写 `.env`（body 里 `persist:false` 跳过回写），保存后立即生效并重建缓存的 agent，无需重启进程。白名单之外的键（如 `PATH`）一律 400 拒绝；GET 响应中 API key 只回显掩码。
 
 调用示例（在 Chrome 里搜索中文关键词并读回结果）：
 

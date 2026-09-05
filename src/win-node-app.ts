@@ -21,6 +21,7 @@ import PCDevice from './pc.device.js';
 import { PCAgent } from './pc.agent.js';
 import { localPCService } from './services/local.pc.service.js';
 import { createServer as createPcServer } from './server.js';
+import { globalModelConfigManager } from '@midscene/shared/env';
 import type { Request, Response } from 'express';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -263,6 +264,161 @@ app.post('/api/agent/reset', (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// ---------- runtime model configuration ----------
+// Hot-reconfigure the model backend without restarting the process:
+// globalConfigManager reads process.env live, and clearModelConfigMap()
+// resets the lazily-parsed model config, so the NEXT AI call already uses
+// the new values. Cached agents are rebuilt (they bind the model lazily,
+// but their device/driver state should not survive a backend switch).
+const MODEL_ENV_PATTERN = /^MIDSCENE_(USE_[A-Za-z0-9_]+|(INSIGHT_|PLANNING_)?MODEL_[A-Za-z0-9_]+|OPENAI_[A-Za-z0-9_]+|REPLANNING_CYCLE_LIMIT)$/;
+const ENV_FILE = process.env.MIDSCENE_PC_ENV_FILE || path.join(__dirname, '..', '.env');
+const SECRET_KEY_PATTERN = /API_KEY|TOKEN/;
+function maskValue(name: string, value: string): string {
+  if (!SECRET_KEY_PATTERN.test(name)) return value;
+  if (value.length <= 8) return '****';
+  return value.slice(0, 4) + '****' + value.slice(-4);
+}
+function currentModelEnv(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (typeof v === 'string' && MODEL_ENV_PATTERN.test(k)) out[k] = maskValue(k, v);
+  }
+  return out;
+}
+// Minimal dotenv-compatible upsert so a container restart keeps the config.
+// Verified against dotenv v16 (the reader used at startup): double-quoted
+// values are taken *literally* (no backslash unescaping), so escaping quotes
+// with backslashes corrupts JSON values. The faithful encodings are: bare
+// values, or single-quoted for anything containing spaces/#/quotes.
+function upsertEnvFile(updates: Record<string, string | null>): void {
+  const existing: Record<string, string> = {};
+  if (fs.existsSync(ENV_FILE)) {
+    for (const raw of fs.readFileSync(ENV_FILE, 'utf8').split(/\r?\n/)) {
+      const m = raw.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+      if (m) existing[m[1]!] = m[2]!;
+    }
+  }
+  for (const [k, v] of Object.entries(updates)) {
+    if (v === null) delete existing[k];
+    else existing[k] = v;
+  }
+  const dq2 = String.fromCharCode(34);
+  const sq2 = String.fromCharCode(39);
+  const strip = (raw: string): string => {
+    if (raw.length >= 2 && raw.startsWith(sq2) && raw.endsWith(sq2)) return raw.slice(1, -1).split(sq2 + sq2).join(sq2);
+    if (raw.length >= 2 && raw.startsWith(dq2) && raw.endsWith(dq2)) {
+      // Legacy files from the previous writer hold double-quoted JSON with
+      // backslash escapes; dotenv reads those literally, so unescape here to
+      // repair the value (any rewrite re-emits it in a dotenv-faithful form).
+      const inner = raw.slice(1, -1);
+      const bs3 = String.fromCharCode(92);
+      if (!inner.includes(bs3)) return inner;
+      let out = '';
+      for (let i = 0; i < inner.length; i++) {
+        if (inner[i] === bs3 && (inner[i + 1] === bs3 || inner[i + 1] === dq2)) { out += inner[i + 1]; i++; }
+        else out += inner[i];
+      }
+      return out;
+    }
+    return raw;
+  };
+  const lines = Object.entries(existing).map(([k, raw]) => {
+    const v = strip(raw);
+    if (/^[A-Za-z0-9 ._@:/+=,-]*$/.test(v) && !/#/.test(v) && v.length > 0) return k + '=' + v;
+    if (!v.includes(sq2)) return k + '=' + sq2 + v + sq2;
+    if (!v.includes(dq2)) return k + '=' + dq2 + v + dq2;
+    throw new Error('value for ' + k + ' contains both quote characters; refuse to write');
+  });
+  fs.writeFileSync(ENV_FILE, lines.join('\n') + '\n');
+}
+function invalidateModelConfig() {
+  try {
+    globalModelConfigManager.clearModelConfigMap();
+  } catch (e: any) {
+    console.warn('[config] clearModelConfigMap failed: ' + (e?.message ?? e));
+  }
+  for (const entry of agentCache.values()) {
+    try {
+      entry.device.destroy();
+    } catch {}
+  }
+  agentCache.clear();
+}
+app.get('/api/config/model', (_req: Request, res: Response) => {
+  res.json({ env: currentModelEnv(), envFile: ENV_FILE });
+});
+app.post('/api/config/model', (req: Request, res: Response) => {
+  try {
+    const values = (req.body?.values ?? req.body) as Record<string, unknown>;
+    if (!values || typeof values !== 'object' || Array.isArray(values)) {
+      res.status(400).json({ ok: false, error: 'body must be { values: { KEY: string-or-null } }' });
+      return;
+    }
+    const updates: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(values)) {
+      if (!MODEL_ENV_PATTERN.test(k)) {
+        res.status(400).json({ ok: false, error: 'forbidden key: ' + k + ' (only MIDSCENE_* model keys are settable)' });
+        return;
+      }
+      if (v !== null && typeof v !== 'string') {
+        res.status(400).json({ ok: false, error: 'value for ' + k + ' must be a string or null' });
+        return;
+      }
+      updates[k] = v as string | null;
+    }
+    if (!Object.keys(updates).length) {
+      res.status(400).json({ ok: false, error: 'no updates given' });
+      return;
+    }
+    for (const [k, v] of Object.entries(updates)) {
+      if (v === null) delete process.env[k];
+      else process.env[k] = v;
+    }
+    // persisted: true = written to env file; 'skipped' = persist:false requested;
+    // false = write failed (see persistError).
+    let persisted: boolean | 'skipped' = true;
+    let persistError: string | undefined;
+    if (req.body?.persist === false) {
+      persisted = 'skipped';
+    } else {
+      try {
+        upsertEnvFile(updates);
+      } catch (e: any) {
+        persisted = false;
+        persistError = String(e?.message ?? e);
+        console.warn('[config] env file write failed: ' + persistError);
+      }
+    }
+    invalidateModelConfig();
+    res.json({ ok: true, applied: Object.keys(updates), persisted, persistError, agentsReset: true, env: currentModelEnv() });
+  } catch (err: any) {
+    res.status(500).json({ ok: false, error: String(err?.message ?? err) });
+  }
+});
+// Connectivity probe without touching live config: GET {base}/models.
+app.post('/api/config/model/test', async (req: Request, res: Response) => {
+  const base = String(req.body?.base_url ?? process.env.MIDSCENE_MODEL_BASE_URL ?? '').replace(/\/+$/, '');
+  const key = String(req.body?.api_key ?? process.env.MIDSCENE_MODEL_API_KEY ?? '');
+  if (!base || !key) {
+    res.status(400).json({ ok: false, error: 'base_url and api_key are required (body or env)' });
+    return;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    const r = await fetch(base + '/models', { headers: { authorization: 'Bearer ' + key }, signal: controller.signal });
+    const bodyText = await r.text();
+    let models: string[] = [];
+    try {
+      models = (JSON.parse(bodyText)?.data ?? []).map((m: any) => m?.id).filter(Boolean).slice(0, 20);
+    } catch {}
+    res.json({ ok: r.ok, status: r.status, models, note: r.ok ? undefined : bodyText.slice(0, 300) });
+  } catch (err: any) {
+    res.status(502).json({ ok: false, error: String(err?.message ?? err) });
+  } finally {
+    clearTimeout(timer);
+  }
+});
 app.listen(PORT, HOST, () => {
   console.log('[win-node-app] window-level API listening on http://' + HOST + ':' + PORT + (TOKEN ? ' (token protected)' : ''));
   console.log('[win-node-app] AI endpoints ' + (ENABLE_AI ? 'enabled' : 'disabled'));

@@ -311,8 +311,13 @@ On top of the built-in PC service endpoints:
 - `POST /api/ai/output` `{ windowId?, task }` — return the model's final answer (with timeout)
 - `POST /api/ai/tap|input|locate` — single window-scoped steps
 - `POST /api/agent/reset` — release cached window devices/agents
+- `GET /api/config/model` — current model env (API keys echoed masked only)
+- `POST /api/config/model` — hot-swap the model backend with a `values` map
+- `POST /api/config/model/test` — probe a model endpoint without changing config
 
 `windowId`/`title`/`appName` define the capture+click coordinate space: the model only sees and operates inside that window rect; omit them to target the primary monitor.
+
+Model hot-configuration: `POST /api/config/model` accepts `MIDSCENE_MODEL_*`, `MIDSCENE_(INSIGHT|PLANNING)_MODEL_*`, `MIDSCENE_OPENAI_*`, `MIDSCENE_USE_*` and `MIDSCENE_REPLANNING_CYCLE_LIMIT`; a `null` value deletes a key. By default the change is written back to `.env` (pass `persist:false` to skip) and takes effect immediately — the model config cache is reset and cached agents rebuilt, no restart needed. Keys outside the allowlist (e.g. `PATH`) are rejected with 400; GET responses mask API keys.
 
 > On Windows, Chinese text is typed via clipboard paste (Ctrl+V) — no IME dependency, code points verified lossless. Screenshot and input require an interactive (desktop) session; SSH/service sessions have no valid desktop handle.
 
