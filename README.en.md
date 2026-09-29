@@ -13,6 +13,7 @@ Control desktop apps and windows with Midscene. This package provides a PC devic
 - Supports multi-monitor, window enumeration and screenshots, encapsulates mouse/keyboard/clipboard operations.
 - Deep integration with `@midscene/core`'s positioning and action system.
 - Adapted to the input-primitives device contract of Midscene 1.10+.
+- Provides an RDP-operation-to-VNC/RFB backend adapter (`agentForRDPOverVNC`) that needs no rdp-helper, FreeRDP3, or Xvfb.
 - Ships a Windows window-level node app (`win-node-app`) exposing window capabilities and window-locked AI tasks over HTTP.
 
 ---
@@ -322,6 +323,47 @@ Model hot-configuration: `POST /api/config/model` accepts `MIDSCENE_MODEL_*`, `M
 > On Windows, Chinese text is typed via clipboard paste (Ctrl+V) — no IME dependency, code points verified lossless. Screenshot and input require an interactive (desktop) session; SSH/service sessions have no valid desktop handle.
 
 ---
+
+## 🛰️ RDP operations over VNC (RFB)
+
+If your code is written against RDPDevice / RDPProtocolRequest, replace the native rdp-helper backend while keeping official RDPDevice semantics. The adapter connects through noVNC/websockify using RFB 3.8:
+
+```ts
+import { agentForRDPOverVNC } from 'midscene-pc';
+
+const agent = await agentForRDPOverVNC({
+  host: '127.0.0.1',
+  port: 14389, // mapped to ws://127.0.0.1:19006/websockify
+});
+```
+
+The protocol translator can also be used directly:
+
+```ts
+import { applyRDPRequest, VNCRDPBackendClient } from 'midscene-pc';
+
+const backend = new VNCRDPBackendClient({ host: '127.0.0.1', port: 14389 });
+await applyRDPRequest(backend, { type: 'connect', config: { host: '127.0.0.1', port: 14389 } });
+await applyRDPRequest(backend, { type: 'mouseMove', x: 640, y: 400 });
+await applyRDPRequest(backend, { type: 'keyPress', keyName: 'Win+r' });
+await applyRDPRequest(backend, { type: 'typeText', text: 'Rdp2Vnc ZHEN 42' });
+await applyRDPRequest(backend, { type: 'disconnect' });
+```
+
+Built-in RDP port mappings are 3389 -> 8006, 3390 -> 8007, 13389 -> 18006, and 14389 -> 19006. For another topology, pass vncUrl or vncPort.
+
+Capability notes:
+
+- Screenshot, size, keyboard, text, and wheel operations were verified against QEMU + noVNC. Uppercase Latin characters are sent as case-sensitive keysyms.
+- Chinese input uses RFB Extended Clipboard (SetEncodings -> Caps -> Notify -> Request -> zlib Provide) followed by Ctrl+V; the guest must have a working vdagent clipboard bridge.
+- Whether RFB PointerEvent reaches the guest depends on QEMU's active mouse handler; some vdagent mouse configurations silently drop pointer events. The regression prints POINTER_VISIBLE; set REQUIRE_POINTER=1 on a known-good target to enforce it.
+
+Regression example:
+
+```bash
+pnpm run test:rdp2vnc test 14389 ./out
+REQUIRE_POINTER=1 pnpm run test:rdp2vnc test 14389 ./out
+```
 
 ## 📄 License
 

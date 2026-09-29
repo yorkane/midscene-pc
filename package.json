@@ -30,7 +30,8 @@
         "dev": "tsx watch demo/run.ts",
         "clean": "rm -rf dist",
         "win-app": "tsx src/win-node-app.ts",
-        "win-app:dist": "node dist/win-node-app.js"
+        "win-app:dist": "node dist/win-node-app.js",
+        "test:rdp2vnc": "tsx demo/rdp2vnc.ts"
     },
     "author": "mofangbao",
     "license": "MIT",
@@ -44,15 +45,17 @@
         "typescript": "^5.9.3"
     },
     "dependencies": {
+        "@midscene/computer": "1.12.3",
         "@midscene/core": "^1.12.3",
+        "@midscene/shared": "^1.12.3",
         "@nut-tree-fork/nut-js": "^4.2.6",
         "express": "^5.1.0",
         "gui": "^0.15.6",
         "jimp": "^1.6.0",
         "node-localstorage": "^3.0.5",
         "node-screenshots": "^0.2.1",
+        "sharp": "^0.34.5",
         "winston": "^3.18.3",
-        "winston-daily-rotate-file": "^5.0.0",
-        "@midscene/shared": "^1.12.3"
+        "winston-daily-rotate-file": "^5.0.0"
     }
 }

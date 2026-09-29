@@ -13,6 +13,7 @@ English README: [README.en.md](./README.en.md)
 - 支持多显示器、窗口枚举与截图，封装鼠标/键盘/剪贴板操作。
 - 与 `@midscene/core` 的定位与动作体系深度集成。
 - 适配 Midscene 1.10+ 的输入原语（input primitives）设备契约。
+- 提供 RDP 操作协议到 VNC/RFB 的 backend 适配（`agentForRDPOverVNC`），无需 rdp-helper、FreeRDP3 或 Xvfb。
 - 内置 Windows 窗口级节点应用 `win-node-app`，把窗口能力与窗口锁定的 AI 任务以 HTTP 接口暴露给外部系统。
 
 
@@ -344,6 +345,47 @@ curl -X POST http://WIN:3333/api/ai/query -H 'content-type: application/json' \\
 > Windows 上的中文输入走剪贴板粘贴（Ctrl+V），不依赖 IME，实测码点无损；截屏与输入要求进程运行在交互（桌面）会话内，SSH/服务会话拿不到有效的桌面句柄。
 
 ---
+
+## 🛰️ RDP 操作协议转 VNC（RFB）
+
+如果上层已经按 RDPDevice / RDPProtocolRequest 编写，可以用 VNC 后端替换原生 rdp-helper。适配点就是官方的 `RDPDeviceOpt.backend`，因此 Midscene 的动作语义保持不变，实际连接走 noVNC/websockify 的 RFB 3.8：
+
+```ts
+import { agentForRDPOverVNC } from 'midscene-pc';
+
+const agent = await agentForRDPOverVNC({
+  host: '127.0.0.1',
+  port: 14389, // 内置映射到 ws://127.0.0.1:19006/websockify
+});
+```
+
+也可以直接翻译操作协议：
+
+```ts
+import { applyRDPRequest, VNCRDPBackendClient } from 'midscene-pc';
+
+const backend = new VNCRDPBackendClient({ host: '127.0.0.1', port: 14389 });
+await applyRDPRequest(backend, { type: 'connect', config: { host: '127.0.0.1', port: 14389 } });
+await applyRDPRequest(backend, { type: 'mouseMove', x: 640, y: 400 });
+await applyRDPRequest(backend, { type: 'keyPress', keyName: 'Win+r' });
+await applyRDPRequest(backend, { type: 'typeText', text: 'Rdp2Vnc ZHEN 42' });
+await applyRDPRequest(backend, { type: 'disconnect' });
+```
+
+内置 RDP 端口映射：3389 -> 8006、3390 -> 8007、13389 -> 18006、14389 -> 19006；其它端口传 vncUrl 或 vncPort。
+
+能力说明：
+
+- 截图/尺寸/键盘/文本/滚轮消息已在 QEMU + noVNC 环境实测；大写 Latin 字母直接发送大小写敏感 keysym。
+- 中文输入使用 RFB Extended Clipboard（SetEncodings -> Caps -> Notify -> Request -> zlib Provide）后再发送 Ctrl+V，要求 guest 侧 vdagent 剪贴板桥可用。
+- RFB PointerEvent 是否生效取决于 QEMU 当前 active mouse handler；某些 vdagent mouse 配置会静默丢弃指针事件。测试脚本会输出 POINTER_VISIBLE，已知目标可用 REQUIRE_POINTER=1 强制把关。
+
+回归示例：
+
+```bash
+pnpm run test:rdp2vnc test 14389 ./out
+REQUIRE_POINTER=1 pnpm run test:rdp2vnc test 14389 ./out
+```
 
 ## 📄 许可证
 
