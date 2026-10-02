@@ -82,7 +82,9 @@ export class VNCDevice {
           await sleep(50);
           await dev.moveAndButton(1, x, y, 25);
         },
-        rightClick: async ({ x, y }: any) => { await dev.moveAndButton(2, x, y); },
+        // RFB PointerEvent 掩码：bit0=1 左键、bit1=2 中键、bit2=4 右键。此前发 2 是中键，
+        // 微信消息上右键从未弹出菜单（2026-09-30/10-01 resdown 删卡功能实证）。
+        rightClick: async ({ x, y }: any) => { await dev.moveAndButton(4, x, y); },
         hover: async ({ x, y }: any) => { dev.ptrEvent(0, x, y); await sleep(120); },
         dragAndDrop: async (from: any, to: any) => {
           dev.ptrEvent(0, from.x, from.y);
@@ -258,7 +260,8 @@ export class VNCDevice {
 
   async rdpMouseButton(button: 'left' | 'right' | 'middle', action: 'down' | 'up' | 'click' | 'doubleClick') {
     this.assertConnected();
-    const mask = button === 'left' ? 1 : button === 'right' ? 2 : 4;
+    // 同上：RFB 标准 1=左 2=中 4=右；旧映射 right→2 实际发的是中键。
+    const mask = button === 'left' ? 1 : button === 'right' ? 4 : 2;
     const { x, y } = this.cursor;
     if (action === 'down') { this.ptrEvent(mask, x, y); await sleep(15); return; }
     if (action === 'up') { this.ptrEvent(0, x, y); await sleep(15); return; }
